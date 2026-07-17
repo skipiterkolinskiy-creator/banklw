@@ -84,6 +84,8 @@ def read_settings() -> Settings:
 
 settings = read_settings()
 router = Router()
+PENDING_ADMIN_INPUTS: dict[int, dict[str, str | int]] = {}
+NUMBER_BETS: dict[int, int] = {}
 
 MENU_PAGES = [
     {
@@ -357,6 +359,10 @@ def get_user(user_id: int) -> Optional[sqlite3.Row]:
 def find_user(token: str) -> Optional[sqlite3.Row]:
     clean = token.strip()
     with closing(connect()) as db:
+        if clean.isdigit():
+            by_id = db.execute("SELECT * FROM users WHERE user_id = ?", (int(clean),)).fetchone()
+            if by_id:
+                return by_id
         if clean.startswith("@"):
             return db.execute("SELECT * FROM users WHERE lower(username) = ?", (clean[1:].lower(),)).fetchone()
         upper = clean.upper()
@@ -368,6 +374,67 @@ def find_user(token: str) -> Optional[sqlite3.Row]:
         if len(digits) >= 4:
             return db.execute("SELECT * FROM users WHERE card_number = ? OR substr(card_number, -4) = ?", (digits, digits[-4:])).fetchone()
     return None
+
+
+def user_card_text(user: sqlite3.Row) -> str:
+    return (
+        "👤 <b>Клиент найден</b>\n"
+        f"Имя: {user['full_name']}\n"
+        f"Username: @{user['username'] or 'нет'}\n"
+        f"Telegram ID: <code>{user['user_id']}</code>\n"
+        f"Статус: {account_status(user)}\n"
+        f"Баланс: <b>{money(user['balance'])} {settings.currency}</b>\n"
+        f"Вклад: <b>{money(user['savings'])} {settings.currency}</b>\n"
+        f"Кредит: <b>{money(user['loan'])} {settings.currency}</b>\n"
+        f"Крипта: <b>{money(user['crypto_balance'])} LWC</b>\n"
+        f"Карта: <code>{user['card_number']}</code>\n"
+        f"Z-ID: <code>{user['z_id']}</code>\n"
+        f"Кошелек: <code>{user['crypto_wallet']}</code>"
+    )
+
+
+def admin_client_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="💰 Выдать", callback_data=f"client:give:{user_id}"),
+                InlineKeyboardButton(text="💸 Списать", callback_data=f"client:take:{user_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="🧮 Поставить баланс", callback_data=f"client:setbalance:{user_id}"),
+                InlineKeyboardButton(text="🪙 Крипта", callback_data=f"client:setcrypto:{user_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="🧊 Заморозить", callback_data=f"client:freeze:{user_id}"),
+                InlineKeyboardButton(text="🔥 Разморозить", callback_data=f"client:unfreeze:{user_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="🔎 Проверка требуется", callback_data=f"client:review:{user_id}"),
+                InlineKeyboardButton(text="✅ Проверен", callback_data=f"client:verify:{user_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="👑 Сделать мэром", callback_data=f"client:mayor:{user_id}"),
+                InlineKeyboardButton(text="🧾 Списать долг", callback_data=f"client:clearloan:{user_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="📜 История", callback_data=f"client:history:{user_id}"),
+                InlineKeyboardButton(text="🔄 Обновить", callback_data=f"client:refresh:{user_id}"),
+            ],
+            [InlineKeyboardButton(text="🔍 Новый поиск", callback_data="admin:find")],
+        ]
+    )
+
+
+def admin_search_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔍 Найти клиента", callback_data="admin:find")],
+            [
+                InlineKeyboardButton(text="📊 Статистика", callback_data="admin:stats"),
+                InlineKeyboardButton(text="🏛 Казна", callback_data="admin:treasury"),
+            ],
+        ]
+    )
 
 
 def resolve_target(message: Message, command: CommandObject) -> tuple[Optional[sqlite3.Row], list[str]]:
@@ -407,6 +474,7 @@ def is_admin_callback(callback: CallbackQuery) -> bool:
 def admin_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="🔍 Найти клиента", callback_data="admin:find")],
             [
                 InlineKeyboardButton(text="📊 Статистика", callback_data="admin:stats"),
                 InlineKeyboardButton(text="🏆 Топ", callback_data="admin:top"),
@@ -451,6 +519,51 @@ def menu_keyboard(page: int) -> InlineKeyboardMarkup:
 def menu_text(page: int) -> str:
     page = max(0, min(page, len(MENU_PAGES) - 1))
     return MENU_PAGES[page]["text"]
+
+
+def casino_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🎲 Кубик 50", callback_data="casino:dice:50"),
+                InlineKeyboardButton(text="🎲 Кубик 500", callback_data="casino:dice:500"),
+            ],
+            [
+                InlineKeyboardButton(text="🃏 21 очко 100", callback_data="casino:blackjack:100"),
+                InlineKeyboardButton(text="🃏 21 очко 1000", callback_data="casino:blackjack:1000"),
+            ],
+            [
+                InlineKeyboardButton(text="🔢 Число 100", callback_data="casino:number:100"),
+                InlineKeyboardButton(text="🔢 Число 1000", callback_data="casino:number:1000"),
+            ],
+        ]
+    )
+
+
+def number_guess_keyboard(bet: int) -> InlineKeyboardMarkup:
+    rows = []
+    for start in (1, 6):
+        rows.append(
+            [
+                InlineKeyboardButton(text=str(num), callback_data=f"casino:numberguess:{bet}:{num}")
+                for num in range(start, start + 5)
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def casino_rules_text() -> str:
+    return (
+        "🎰 <b>Казино Z-Банка</b>\n\n"
+        "🎲 <b>Кубик</b>\n"
+        "Ставка списывается, если выпало 1-4. Если выпало 5-6, выигрыш x2.\n\n"
+        "🔢 <b>Угадай число</b>\n"
+        "Выбираешь число от 1 до 10. Угадал - выигрыш x7, не угадал - ставка списана.\n\n"
+        "🃏 <b>21 очко</b>\n"
+        "Бот сам раздает карты тебе и дилеру. Кто ближе к 21 и не перебрал - победил. Выигрыш x2.\n\n"
+        "📉 Проигрыш в истории идет как ООО \"Бнал\".\n"
+        "📈 Выигрыш в истории идет как ООО \"Бул казик\"."
+    )
 
 
 def account_status(user: sqlite3.Row) -> str:
@@ -559,6 +672,75 @@ def run_alt_guard(db: sqlite3.Connection, receiver_id: int) -> Optional[str]:
         add_transaction(db, "alt_guard_freeze", 0, to_user_id=receiver_id, comment=reason)
         return reason
     return None
+
+
+def apply_casino_result(user_id: int, bet: int, win: bool, payout: int, game_comment: str) -> int:
+    with closing(connect()) as db:
+        user = db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+        if not user or user["balance"] < bet or user["is_blocked"]:
+            return -1
+        if win:
+            db.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (payout, user_id))
+            add_transaction(db, "casino_win", payout, to_user_id=user_id, comment=f'ООО "Бул казик": {game_comment}')
+            new_balance = user["balance"] + payout
+        else:
+            db.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (bet, user_id))
+            add_transaction(db, "casino_loss", bet, from_user_id=user_id, comment=f'ООО "Бнал": {game_comment}')
+            new_balance = user["balance"] - bet
+        db.commit()
+        return new_balance
+
+
+def play_dice_for_user(user_id: int, bet: int) -> str:
+    roll = random.randint(1, 6)
+    win = roll >= 5
+    payout = bet * 2
+    new_balance = apply_casino_result(user_id, bet, win, payout, f"кубик выпал {roll}")
+    if new_balance < 0:
+        return "⚠️ Игра недоступна: счет заморожен или не хватает денег на ставку."
+    result = f"🎲 Выпало: <b>{roll}</b>\n"
+    if win:
+        result += f"📈 ООО \"Бул казик\" начислил {money(payout)} {settings.currency}."
+    else:
+        result += f"📉 ООО \"Бнал\" списал {money(bet)} {settings.currency}."
+    return result + f"\n💰 Баланс: {money(new_balance)} {settings.currency}"
+
+
+def play_number_for_user(user_id: int, bet: int, guess: int) -> str:
+    result_number = random.randint(1, 10)
+    win = guess == result_number
+    payout = bet * 7
+    new_balance = apply_casino_result(user_id, bet, win, payout, f"число {result_number}, выбор {guess}")
+    if new_balance < 0:
+        return "⚠️ Игра недоступна: счет заморожен или не хватает денег на ставку."
+    result = f"🔢 Выпало число: <b>{result_number}</b>\n🎯 Твой выбор: <b>{guess}</b>\n"
+    if win:
+        result += f"📈 ООО \"Бул казик\" начислил {money(payout)} {settings.currency}."
+    else:
+        result += f"📉 ООО \"Бнал\" списал {money(bet)} {settings.currency}."
+    return result + f"\n💰 Баланс: {money(new_balance)} {settings.currency}"
+
+
+def play_blackjack_for_user(user_id: int, bet: int) -> str:
+    player = [random.randint(1, 13), random.randint(1, 13)]
+    dealer = [random.randint(1, 13), random.randint(1, 13)]
+    while blackjack_score(player) < 17:
+        player.append(random.randint(1, 13))
+    while blackjack_score(dealer) < 17:
+        dealer.append(random.randint(1, 13))
+    p_score = blackjack_score(player)
+    d_score = blackjack_score(dealer)
+    win = p_score <= 21 and (d_score > 21 or p_score > d_score)
+    payout = bet * 2
+    new_balance = apply_casino_result(user_id, bet, win, payout, f"21 очко: игрок {p_score}, дилер {d_score}")
+    if new_balance < 0:
+        return "⚠️ Игра недоступна: счет заморожен или не хватает денег на ставку."
+    result = f"🃏 Твои очки: <b>{p_score}</b>\n🎩 Дилер: <b>{d_score}</b>\n"
+    if win:
+        result += f"📈 ООО \"Бул казик\" начислил {money(payout)} {settings.currency}."
+    else:
+        result += f"📉 ООО \"Бнал\" списал {money(bet)} {settings.currency}."
+    return result + f"\n💰 Баланс: {money(new_balance)} {settings.currency}"
 
 
 async def transfer_money(message: Message, target: sqlite3.Row, amount: int, source: str, comment: str) -> None:
@@ -1099,7 +1281,43 @@ async def billtax(message: Message) -> None:
 @router.message(Command("casino"))
 async def casino(message: Message) -> None:
     remember_user(message)
-    await message.answer("Казино: /dice 100, /number 100 7, /blackjack 100.")
+    await message.answer(casino_rules_text(), reply_markup=casino_keyboard())
+
+
+@router.callback_query(F.data.startswith("casino:"))
+async def casino_callbacks(callback: CallbackQuery) -> None:
+    user = get_user(callback.from_user.id)
+    if user is None:
+        await callback.answer("Сначала напиши /start", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    action = parts[1]
+    if action == "dice":
+        bet = int(parts[2])
+        await callback.message.answer(play_dice_for_user(callback.from_user.id, bet), reply_markup=casino_keyboard())
+        await callback.answer()
+        return
+    if action == "blackjack":
+        bet = int(parts[2])
+        await callback.message.answer(play_blackjack_for_user(callback.from_user.id, bet), reply_markup=casino_keyboard())
+        await callback.answer()
+        return
+    if action == "number":
+        bet = int(parts[2])
+        NUMBER_BETS[callback.from_user.id] = bet
+        await callback.message.answer(
+            f"🔢 Ставка: {money(bet)} {settings.currency}\nВыбери число от 1 до 10:",
+            reply_markup=number_guess_keyboard(bet),
+        )
+        await callback.answer()
+        return
+    if action == "numberguess":
+        bet = int(parts[2])
+        guess = int(parts[3])
+        await callback.message.answer(play_number_for_user(callback.from_user.id, bet, guess), reply_markup=casino_keyboard())
+        await callback.answer()
+        return
 
 
 @router.message(Command("number"))
@@ -1107,25 +1325,19 @@ async def number_game(message: Message, command: CommandObject) -> None:
     account = remember_user(message)
     args = (command.args or "").split()
     if len(args) < 2:
-        await message.answer("Формат: /number 100 7. Угадай число от 1 до 10.")
+        await message.answer(
+            "🔢 <b>Угадай число</b>\n"
+            "Правила: выбери число от 1 до 10. Угадал - выигрыш x7, не угадал - ставка списана.\n"
+            "Формат: <code>/number 100 7</code>",
+            reply_markup=casino_keyboard(),
+        )
         return
     bet = parse_amount(args[0])
     guess = parse_amount(args[1])
     if bet is None or guess is None or guess > 10 or account["balance"] < bet:
-        await message.answer("Проверь ставку, число 1-10 и баланс.")
+        await message.answer("⚠️ Проверь ставку, число 1-10 и баланс.")
         return
-    result = random.randint(1, 10)
-    win = guess == result
-    payout = bet * 7
-    with closing(connect()) as db:
-        if win:
-            db.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (payout, account["user_id"]))
-            add_transaction(db, "casino_win", payout, to_user_id=account["user_id"], comment='ООО "Бул казик"')
-        else:
-            db.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (bet, account["user_id"]))
-            add_transaction(db, "casino_loss", bet, from_user_id=account["user_id"], comment='ООО "Бнал"')
-        db.commit()
-    await message.answer(("Выигрыш" if win else "Проигрыш") + f". Выпало {result}. " + ('ООО "Бул казик"' if win else 'Списал ООО "Бнал"'))
+    await message.answer(play_number_for_user(account["user_id"], bet, guess), reply_markup=casino_keyboard())
 
 
 @router.message(Command("dice"))
@@ -1134,20 +1346,14 @@ async def dice_game(message: Message, command: CommandObject) -> None:
     args = (command.args or "").split()
     bet = parse_amount(args[0]) if args else None
     if bet is None or account["balance"] < bet:
-        await message.answer("Формат: /dice 100. Нужно иметь ставку на балансе.")
+        await message.answer(
+            "🎲 <b>Кубик</b>\n"
+            "Правила: 1-4 проигрыш, 5-6 выигрыш x2.\n"
+            "Формат: <code>/dice 100</code>",
+            reply_markup=casino_keyboard(),
+        )
         return
-    roll = random.randint(1, 6)
-    win = roll >= 5
-    payout = bet * 2
-    with closing(connect()) as db:
-        if win:
-            db.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (payout, account["user_id"]))
-            add_transaction(db, "casino_win", payout, to_user_id=account["user_id"], comment='ООО "Бул казик"')
-        else:
-            db.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (bet, account["user_id"]))
-            add_transaction(db, "casino_loss", bet, from_user_id=account["user_id"], comment='ООО "Бнал"')
-        db.commit()
-    await message.answer(f"Кубик: {roll}. " + ("Выигрыш от ООО \"Бул казик\"." if win else "Списал ООО \"Бнал\"."))
+    await message.answer(play_dice_for_user(account["user_id"], bet), reply_markup=casino_keyboard())
 
 
 def blackjack_score(cards: list[int]) -> int:
@@ -1164,30 +1370,14 @@ async def blackjack(message: Message, command: CommandObject) -> None:
     account = remember_user(message)
     bet = parse_amount((command.args or "").split()[0]) if command.args else None
     if bet is None or account["balance"] < bet:
-        await message.answer("Формат: /blackjack 100. Нужно иметь ставку на балансе.")
+        await message.answer(
+            "🃏 <b>21 очко</b>\n"
+            "Правила: бот раздает карты тебе и дилеру. Кто ближе к 21 и не перебрал - победил. Выигрыш x2.\n"
+            "Формат: <code>/blackjack 100</code>",
+            reply_markup=casino_keyboard(),
+        )
         return
-    player = [random.randint(1, 13), random.randint(1, 13)]
-    dealer = [random.randint(1, 13), random.randint(1, 13)]
-    while blackjack_score(player) < 17:
-        player.append(random.randint(1, 13))
-    while blackjack_score(dealer) < 17:
-        dealer.append(random.randint(1, 13))
-    p_score = blackjack_score(player)
-    d_score = blackjack_score(dealer)
-    win = p_score <= 21 and (d_score > 21 or p_score > d_score)
-    payout = bet * 2
-    with closing(connect()) as db:
-        if win:
-            db.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (payout, account["user_id"]))
-            add_transaction(db, "casino_win", payout, to_user_id=account["user_id"], comment='ООО "Бул казик"')
-        else:
-            db.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (bet, account["user_id"]))
-            add_transaction(db, "casino_loss", bet, from_user_id=account["user_id"], comment='ООО "Бнал"')
-        db.commit()
-    await message.answer(
-        f"21 очко: у тебя {p_score}, у дилера {d_score}. "
-        + ("Выигрыш от ООО \"Бул казик\"." if win else "Списал ООО \"Бнал\".")
-    )
+    await message.answer(play_blackjack_for_user(account["user_id"], bet), reply_markup=casino_keyboard())
 
 
 @router.message(Command("panel"))
@@ -1196,7 +1386,11 @@ async def panel(message: Message) -> None:
     if not is_admin_context(message):
         await message.answer("Админ-панель доступна только в назначенном чате.")
         return
-    await message.answer(f"<b>{settings.bank_name}: админ-панель</b>", reply_markup=admin_keyboard())
+    await message.answer(
+        f"🛠 <b>{settings.bank_name}: админ-панель</b>\n"
+        "Нажми 🔍 <b>Найти клиента</b> и отправь Z-ID, криптокошелек, номер карты, последние 4 цифры карты, @username или Telegram ID.",
+        reply_markup=admin_keyboard(),
+    )
 
 
 @router.callback_query(F.data.startswith("admin:"))
@@ -1205,6 +1399,14 @@ async def admin_callbacks(callback: CallbackQuery) -> None:
         await callback.answer("Нет доступа.", show_alert=True)
         return
     action = callback.data.split(":", 1)[1]
+    if action == "find":
+        PENDING_ADMIN_INPUTS[callback.from_user.id] = {"action": "find_client"}
+        await callback.message.answer(
+            "🔍 Отправь одним сообщением данные клиента:\n"
+            "Z-ID, криптокошелек, карту, последние 4 цифры карты, @username или Telegram ID."
+        )
+        await callback.answer()
+        return
     with closing(connect()) as db:
         if action == "stats":
             stats = db.execute(
@@ -1231,6 +1433,7 @@ async def admin_callbacks(callback: CallbackQuery) -> None:
         else:
             text = (
                 "<b>Админ-команды</b>\n"
+                "/findclient запрос - найти клиента\n"
                 "/check @user - проверка аккаунта\n"
                 "/freeze @user причина - блокировка аккаунта\n"
                 "/unfreeze @user - разморозка\n"
@@ -1241,6 +1444,164 @@ async def admin_callbacks(callback: CallbackQuery) -> None:
             )
     await callback.message.edit_text(text, reply_markup=admin_keyboard())
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("client:"))
+async def client_callbacks(callback: CallbackQuery) -> None:
+    if not is_admin_callback(callback):
+        await callback.answer("Нет доступа.", show_alert=True)
+        return
+
+    _, action, user_id_raw = callback.data.split(":", 2)
+    user_id = int(user_id_raw)
+    user = get_user(user_id)
+    if user is None:
+        await callback.answer("Клиент не найден.", show_alert=True)
+        return
+
+    amount_actions = {
+        "give": "💰 Введи сумму, которую нужно выдать клиенту.",
+        "take": "💸 Введи сумму, которую нужно списать у клиента.",
+        "setbalance": "🧮 Введи новый баланс клиента.",
+        "setcrypto": "🪙 Введи новый баланс LWC.",
+    }
+    if action in amount_actions:
+        PENDING_ADMIN_INPUTS[callback.from_user.id] = {"action": action, "user_id": user_id}
+        await callback.message.answer(amount_actions[action])
+        await callback.answer()
+        return
+
+    with closing(connect()) as db:
+        if action == "freeze":
+            db.execute(
+                "UPDATE users SET is_blocked = 1, block_reason = ?, block_until = NULL WHERE user_id = ?",
+                ("заморозка через панель", user_id),
+            )
+            add_transaction(db, "freeze", 0, from_user_id=user_id, comment="Заморозка через панель")
+        elif action == "unfreeze":
+            db.execute("UPDATE users SET is_blocked = 0, block_reason = NULL, block_until = NULL WHERE user_id = ?", (user_id,))
+            add_transaction(db, "unfreeze", 0, to_user_id=user_id, comment="Разморозка через панель")
+        elif action == "review":
+            db.execute(
+                "UPDATE users SET is_verified = 0, is_blocked = 1, block_reason = ?, block_until = NULL WHERE user_id = ?",
+                ("требуется проверка", user_id),
+            )
+            add_transaction(db, "review_required", 0, from_user_id=user_id, comment="Требуется проверка")
+        elif action == "verify":
+            db.execute(
+                "UPDATE users SET is_verified = 1, is_blocked = 0, block_reason = NULL, block_until = NULL WHERE user_id = ?",
+                (user_id,),
+            )
+            add_transaction(db, "verified", 0, to_user_id=user_id, comment="Аккаунт проверен")
+        elif action == "mayor":
+            db.execute("UPDATE users SET is_mayor = 0")
+            db.execute("UPDATE users SET is_mayor = 1 WHERE user_id = ?", (user_id,))
+            add_transaction(db, "set_mayor", 0, to_user_id=user_id, comment="Назначен мэром")
+        elif action == "clearloan":
+            db.execute("UPDATE users SET loan = 0, loan_due_at = NULL WHERE user_id = ?", (user_id,))
+            add_transaction(db, "clear_loan", 0, to_user_id=user_id, comment="Долг списан через панель")
+        elif action == "history":
+            rows = db.execute(
+                """
+                SELECT * FROM transactions
+                WHERE from_user_id = ? OR to_user_id = ?
+                ORDER BY id DESC
+                LIMIT 12
+                """,
+                (user_id, user_id),
+            ).fetchall()
+            lines = []
+            for row in rows:
+                direction = "➕" if row["to_user_id"] == user_id else "➖"
+                lines.append(f"{direction} {money(row['amount'])} - {row['comment'] or row['type']}")
+            text = "📜 <b>История клиента</b>\n" + ("\n".join(lines) if lines else "История пустая.")
+            await callback.message.edit_text(text, reply_markup=admin_client_keyboard(user_id))
+            await callback.answer()
+            return
+        db.commit()
+
+    fresh = get_user(user_id)
+    await callback.message.edit_text(user_card_text(fresh), reply_markup=admin_client_keyboard(user_id))
+    await callback.answer("Готово.")
+
+
+async def show_client_panel(message: Message, query: str) -> None:
+    user = find_user(query)
+    if user is None:
+        await message.answer(
+            "⚠️ Клиент не найден.\n"
+            "Можно искать по Z-ID, криптокошельку, карте, последним 4 цифрам карты, @username или Telegram ID.\n\n"
+            "Важно: по @username бот найдет только тех, кто уже писал боту или в чат, где бот видел сообщение."
+        )
+        return
+    await message.answer(user_card_text(user), reply_markup=admin_client_keyboard(user["user_id"]))
+
+
+@router.message(Command("findclient"))
+async def findclient(message: Message, command: CommandObject) -> None:
+    remember_user(message)
+    if not is_admin_context(message):
+        await message.answer("🔒 Поиск клиента доступен только в назначенном админ-чате.")
+        return
+    query = (command.args or "").strip()
+    if not query:
+        PENDING_ADMIN_INPUTS[message.from_user.id] = {"action": "find_client"}
+        await message.answer("🔍 Отправь Z-ID, криптокошелек, карту, последние 4 цифры, @username или Telegram ID.")
+        return
+    await show_client_panel(message, query)
+
+
+async def handle_pending_admin_input(message: Message) -> bool:
+    if not message.from_user or message.from_user.id not in PENDING_ADMIN_INPUTS:
+        return False
+    if not is_admin_context(message):
+        PENDING_ADMIN_INPUTS.pop(message.from_user.id, None)
+        return False
+
+    pending = PENDING_ADMIN_INPUTS.pop(message.from_user.id)
+    action = str(pending["action"])
+    text = (message.text or "").strip()
+    if action == "find_client":
+        await show_client_panel(message, text)
+        return True
+
+    user_id = int(pending["user_id"])
+    amount = parse_amount(text)
+    if amount is None:
+        await message.answer("⚠️ Нужно отправить сумму числом. Попробуй действие в панели еще раз.")
+        return True
+
+    user = get_user(user_id)
+    if user is None:
+        await message.answer("⚠️ Клиент уже не найден.")
+        return True
+
+    with closing(connect()) as db:
+        if action == "give":
+            db.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
+            add_transaction(db, "admin_give", amount, to_user_id=user_id, comment="Выдача через панель")
+            result = f"✅ Выдано {money(amount)} {settings.currency}."
+        elif action == "take":
+            db.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (amount, user_id))
+            add_transaction(db, "admin_take", amount, from_user_id=user_id, comment="Списание через панель")
+            result = f"✅ Списано {money(amount)} {settings.currency}."
+        elif action == "setbalance":
+            db.execute("UPDATE users SET balance = ? WHERE user_id = ?", (amount, user_id))
+            add_transaction(db, "admin_setbalance", amount, to_user_id=user_id, comment="Баланс установлен через панель")
+            result = f"✅ Баланс установлен: {money(amount)} {settings.currency}."
+        elif action == "setcrypto":
+            db.execute("UPDATE users SET crypto_balance = ? WHERE user_id = ?", (amount, user_id))
+            add_transaction(db, "admin_setcrypto", amount, to_user_id=user_id, comment="Криптобаланс установлен через панель")
+            result = f"✅ Криптобаланс установлен: {money(amount)} LWC."
+        else:
+            await message.answer("⚠️ Неизвестное действие.")
+            return True
+        db.commit()
+
+    fresh = get_user(user_id)
+    await message.answer(result)
+    await message.answer(user_card_text(fresh), reply_markup=admin_client_keyboard(user_id))
+    return True
 
 
 async def admin_money_command(message: Message, command: CommandObject, mode: str) -> None:
@@ -1378,6 +1739,8 @@ async def setmayor(message: Message, command: CommandObject) -> None:
 
 @router.message()
 async def observe_chats(message: Message) -> None:
+    if await handle_pending_admin_input(message):
+        return
     logging.info("Message in chat_id=%s from user_id=%s", message.chat.id, message.from_user.id if message.from_user else None)
     if message.from_user:
         remember_user(message)
