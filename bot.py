@@ -86,6 +86,7 @@ settings = read_settings()
 router = Router()
 PENDING_ADMIN_INPUTS: dict[int, dict[str, str | int]] = {}
 NUMBER_BETS: dict[int, int] = {}
+BLACKJACK_SESSIONS: dict[int, dict[str, object]] = {}
 
 MENU_PAGES = [
     {
@@ -560,9 +561,21 @@ def casino_rules_text() -> str:
         "🔢 <b>Угадай число</b>\n"
         "Выбираешь число от 1 до 10. Угадал - выигрыш x7, не угадал - ставка списана.\n\n"
         "🃏 <b>21 очко</b>\n"
-        "Бот сам раздает карты тебе и дилеру. Кто ближе к 21 и не перебрал - победил. Выигрыш x2.\n\n"
+        "Сначала тебе дают 2 карты. Потом выбираешь: взять еще карту или остановиться. После стопа ходит дилер. Кто ближе к 21 и не перебрал - победил. Выигрыш x2.\n\n"
         "📉 Проигрыш в истории идет как ООО \"Бнал\".\n"
         "📈 Выигрыш в истории идет как ООО \"Бул казик\"."
+    )
+
+
+def blackjack_action_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="➕ Взять карту", callback_data="blackjack:hit"),
+                InlineKeyboardButton(text="✋ Стоп", callback_data="blackjack:stand"),
+            ],
+            [InlineKeyboardButton(text="❌ Сдаться", callback_data="blackjack:surrender")],
+        ]
     )
 
 
@@ -721,26 +734,129 @@ def play_number_for_user(user_id: int, bet: int, guess: int) -> str:
     return result + f"\n💰 Баланс: {money(new_balance)} {settings.currency}"
 
 
-def play_blackjack_for_user(user_id: int, bet: int) -> str:
-    player = [random.randint(1, 13), random.randint(1, 13)]
-    dealer = [random.randint(1, 13), random.randint(1, 13)]
-    while blackjack_score(player) < 17:
-        player.append(random.randint(1, 13))
-    while blackjack_score(dealer) < 17:
-        dealer.append(random.randint(1, 13))
-    p_score = blackjack_score(player)
-    d_score = blackjack_score(dealer)
-    win = p_score <= 21 and (d_score > 21 or p_score > d_score)
-    payout = bet * 2
-    new_balance = apply_casino_result(user_id, bet, win, payout, f"21 очко: игрок {p_score}, дилер {d_score}")
-    if new_balance < 0:
-        return "⚠️ Игра недоступна: счет заморожен или не хватает денег на ставку."
-    result = f"🃏 Твои очки: <b>{p_score}</b>\n🎩 Дилер: <b>{d_score}</b>\n"
-    if win:
-        result += f"📈 ООО \"Бул казик\" начислил {money(payout)} {settings.currency}."
+def draw_card() -> int:
+    return random.randint(1, 13)
+
+
+def card_name(card: int) -> str:
+    names = {1: "A", 11: "J", 12: "Q", 13: "K"}
+    return names.get(card, str(card))
+
+
+def cards_text(cards: list[int]) -> str:
+    return " ".join(f"[{card_name(card)}]" for card in cards)
+
+
+def start_blackjack_for_user(user_id: int, bet: int) -> tuple[str, Optional[InlineKeyboardMarkup]]:
+    with closing(connect()) as db:
+        user = db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+        if not user or user["is_blocked"] or user["balance"] < bet:
+            return "⚠️ Игра недоступна: счет заморожен или не хватает денег на ставку.", casino_keyboard()
+        db.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (bet, user_id))
+        db.commit()
+        balance_after_bet = user["balance"] - bet
+
+    BLACKJACK_SESSIONS[user_id] = {
+        "bet": bet,
+        "player": [draw_card(), draw_card()],
+        "dealer": [draw_card(), draw_card()],
+        "balance_after_bet": balance_after_bet,
+    }
+    text = blackjack_state_text(user_id, reveal_dealer=False)
+    player_score = blackjack_score(BLACKJACK_SESSIONS[user_id]["player"])
+    if player_score == 21:
+        return finish_blackjack(user_id, forced_result="blackjack")
+    return text, blackjack_action_keyboard()
+
+
+def blackjack_state_text(user_id: int, reveal_dealer: bool) -> str:
+    session = BLACKJACK_SESSIONS[user_id]
+    player = session["player"]
+    dealer = session["dealer"]
+    bet = session["bet"]
+    player_score = blackjack_score(player)
+    if reveal_dealer:
+        dealer_line = f"🎩 Дилер: {cards_text(dealer)} = <b>{blackjack_score(dealer)}</b>"
     else:
-        result += f"📉 ООО \"Бнал\" списал {money(bet)} {settings.currency}."
-    return result + f"\n💰 Баланс: {money(new_balance)} {settings.currency}"
+        dealer_line = f"🎩 Дилер: [{card_name(dealer[0])}] [??]"
+    return (
+        "🃏 <b>21 очко</b>\n"
+        f"💵 Ставка: {money(bet)} {settings.currency}\n"
+        f"🧑 Ты: {cards_text(player)} = <b>{player_score}</b>\n"
+        f"{dealer_line}\n\n"
+        "Выбери: взять карту или остановиться."
+    )
+
+
+def finish_blackjack(user_id: int, forced_result: Optional[str] = None) -> tuple[str, Optional[InlineKeyboardMarkup]]:
+    session = BLACKJACK_SESSIONS.pop(user_id, None)
+    if not session:
+        return "⚠️ Активной игры в 21 очко нет. Открой /casino и начни новую.", casino_keyboard()
+
+    bet = int(session["bet"])
+    player = session["player"]
+    dealer = session["dealer"]
+
+    if forced_result == "surrender":
+        refund = bet // 2
+        with closing(connect()) as db:
+            user = db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+            db.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (refund, user_id))
+            add_transaction(db, "casino_loss", bet - refund, from_user_id=user_id, comment='ООО "Бнал": сдача в 21 очко')
+            db.commit()
+            new_balance = user["balance"] + refund
+        return (
+            f"🏳️ Ты сдался.\n📉 ООО \"Бнал\" списал {money(bet - refund)} {settings.currency}.\n"
+            f"💰 Баланс: {money(new_balance)} {settings.currency}",
+            casino_keyboard(),
+        )
+
+    while blackjack_score(dealer) < 17 and forced_result != "bust":
+        dealer.append(draw_card())
+
+    player_score = blackjack_score(player)
+    dealer_score = blackjack_score(dealer)
+    blackjack = forced_result == "blackjack"
+    bust = player_score > 21 or forced_result == "bust"
+    win = blackjack or (not bust and player_score <= 21 and (dealer_score > 21 or player_score > dealer_score))
+    push = not win and not bust and player_score == dealer_score
+
+    if blackjack:
+        payout = bet * 3
+    elif win:
+        payout = bet * 2
+    elif push:
+        payout = bet
+    else:
+        payout = 0
+
+    with closing(connect()) as db:
+        user = db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+        if payout:
+            db.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (payout, user_id))
+        if win:
+            add_transaction(db, "casino_win", payout, to_user_id=user_id, comment=f'ООО "Бул казик": 21 очко, игрок {player_score}, дилер {dealer_score}')
+        elif push:
+            add_transaction(db, "casino_push", payout, to_user_id=user_id, comment=f"Возврат ставки: 21 очко, игрок {player_score}, дилер {dealer_score}")
+        else:
+            add_transaction(db, "casino_loss", bet, from_user_id=user_id, comment=f'ООО "Бнал": 21 очко, игрок {player_score}, дилер {dealer_score}')
+        db.commit()
+        new_balance = user["balance"] + payout
+
+    text = (
+        "🃏 <b>Итог 21 очко</b>\n"
+        f"🧑 Ты: {cards_text(player)} = <b>{player_score}</b>\n"
+        f"🎩 Дилер: {cards_text(dealer)} = <b>{dealer_score}</b>\n"
+    )
+    if blackjack:
+        text += f"🌟 Blackjack! ООО \"Бул казик\" начислил {money(payout)} {settings.currency}."
+    elif win:
+        text += f"📈 Победа! ООО \"Бул казик\" начислил {money(payout)} {settings.currency}."
+    elif push:
+        text += f"↩️ Ничья. Ставка {money(bet)} {settings.currency} возвращена."
+    else:
+        text += f"📉 Проигрыш. ООО \"Бнал\" списал {money(bet)} {settings.currency}."
+    return text + f"\n💰 Баланс: {money(new_balance)} {settings.currency}", casino_keyboard()
 
 
 async def transfer_money(message: Message, target: sqlite3.Row, amount: int, source: str, comment: str) -> None:
@@ -1300,7 +1416,8 @@ async def casino_callbacks(callback: CallbackQuery) -> None:
         return
     if action == "blackjack":
         bet = int(parts[2])
-        await callback.message.answer(play_blackjack_for_user(callback.from_user.id, bet), reply_markup=casino_keyboard())
+        text, keyboard = start_blackjack_for_user(callback.from_user.id, bet)
+        await callback.message.answer(text, reply_markup=keyboard)
         await callback.answer()
         return
     if action == "number":
@@ -1318,6 +1435,38 @@ async def casino_callbacks(callback: CallbackQuery) -> None:
         await callback.message.answer(play_number_for_user(callback.from_user.id, bet, guess), reply_markup=casino_keyboard())
         await callback.answer()
         return
+
+
+@router.callback_query(F.data.startswith("blackjack:"))
+async def blackjack_callbacks(callback: CallbackQuery) -> None:
+    user_id = callback.from_user.id
+    action = callback.data.split(":", 1)[1]
+    if user_id not in BLACKJACK_SESSIONS:
+        await callback.answer("Активной игры нет.", show_alert=True)
+        await callback.message.answer("🃏 Открой /casino и начни новую игру.", reply_markup=casino_keyboard())
+        return
+
+    if action == "hit":
+        session = BLACKJACK_SESSIONS[user_id]
+        session["player"].append(draw_card())
+        if blackjack_score(session["player"]) > 21:
+            text, keyboard = finish_blackjack(user_id, forced_result="bust")
+            await callback.message.edit_text(text, reply_markup=keyboard)
+        else:
+            await callback.message.edit_text(blackjack_state_text(user_id, reveal_dealer=False), reply_markup=blackjack_action_keyboard())
+        await callback.answer()
+        return
+
+    if action == "stand":
+        text, keyboard = finish_blackjack(user_id)
+        await callback.message.edit_text(text, reply_markup=keyboard)
+        await callback.answer()
+        return
+
+    if action == "surrender":
+        text, keyboard = finish_blackjack(user_id, forced_result="surrender")
+        await callback.message.edit_text(text, reply_markup=keyboard)
+        await callback.answer()
 
 
 @router.message(Command("number"))
@@ -1372,12 +1521,13 @@ async def blackjack(message: Message, command: CommandObject) -> None:
     if bet is None or account["balance"] < bet:
         await message.answer(
             "🃏 <b>21 очко</b>\n"
-            "Правила: бот раздает карты тебе и дилеру. Кто ближе к 21 и не перебрал - победил. Выигрыш x2.\n"
+            "Правила: тебе дают 2 карты, дальше можно взять еще карту или нажать стоп. После стопа ходит дилер. Кто ближе к 21 и не перебрал - победил. Выигрыш x2.\n"
             "Формат: <code>/blackjack 100</code>",
             reply_markup=casino_keyboard(),
         )
         return
-    await message.answer(play_blackjack_for_user(account["user_id"], bet), reply_markup=casino_keyboard())
+    text, keyboard = start_blackjack_for_user(account["user_id"], bet)
+    await message.answer(text, reply_markup=keyboard)
 
 
 @router.message(Command("panel"))
