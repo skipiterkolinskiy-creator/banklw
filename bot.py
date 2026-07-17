@@ -13,7 +13,14 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandObject
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+)
 from dotenv import load_dotenv
 
 
@@ -77,6 +84,74 @@ def read_settings() -> Settings:
 
 settings = read_settings()
 router = Router()
+
+MENU_PAGES = [
+    {
+        "title": "🏦 Основное",
+        "text": "🏦 <b>Основное меню Z-Банка</b>\nВыбери действие ниже:",
+        "buttons": [
+            ("💰 Баланс", "menu:cmd:balance"),
+            ("📜 История", "menu:cmd:history"),
+            ("🏆 Топ", "menu:cmd:top"),
+            ("🪪 Мои реквизиты", "menu:cmd:details"),
+        ],
+    },
+    {
+        "title": "💸 Переводы",
+        "text": "💸 <b>Переводы</b>\nКоманды для переводов по карте, Z-ID и криптокошельку:",
+        "buttons": [
+            ("💳 Перевод", "menu:help:pay"),
+            ("🕶 Z-ID перевод", "menu:help:zpay"),
+            ("🪙 Криптокошелек", "menu:cmd:crypto"),
+            ("🔁 Криптоперевод", "menu:help:cryptopay"),
+        ],
+    },
+    {
+        "title": "💼 Банк",
+        "text": "💼 <b>Банковские услуги</b>\nКредиты, вклады и банкротство:",
+        "buttons": [
+            ("📥 Вклад", "menu:help:deposit"),
+            ("📤 Снять вклад", "menu:help:withdraw"),
+            ("💳 Кредит", "menu:help:loan"),
+            ("🧾 Банкротство", "menu:help:bankrupt"),
+        ],
+    },
+    {
+        "title": "🏛 Город",
+        "text": "🏛 <b>Город и казна</b>\nНалоги, казна и помощь LimeWorld:",
+        "buttons": [
+            ("🏛 Казна", "menu:cmd:treasury"),
+            ("🎁 Донат в казну", "menu:help:donate"),
+            ("🧾 Налоги", "menu:cmd:tax"),
+            ("✅ Оплатить налог", "menu:help:paytax"),
+        ],
+    },
+    {
+        "title": "🎰 Игры",
+        "text": "🎰 <b>Казино</b>\nИгры Z-Банка:",
+        "buttons": [
+            ("🎲 Кубик", "menu:help:dice"),
+            ("🔢 Угадай число", "menu:help:number"),
+            ("🃏 21 очко", "menu:help:blackjack"),
+            ("🎰 Казино", "menu:cmd:casino"),
+        ],
+    },
+]
+
+MENU_HELP = {
+    "pay": "💳 <b>Перевод по карте/нику</b>\nНапиши: <code>/pay @user 100</code>\nИли ответом на сообщение: <code>/pay 100</code>",
+    "zpay": "🕶 <b>Анонимный перевод по Z-ID</b>\nНапиши: <code>/zpay Z1234567890 100</code>",
+    "cryptopay": "🔁 <b>Криптоперевод</b>\nНапиши: <code>/cryptopay LWABCDEF... 10</code>",
+    "deposit": "📥 <b>Пополнить вклад</b>\nНапиши: <code>/deposit 1000</code>",
+    "withdraw": "📤 <b>Снять со вклада</b>\nНапиши: <code>/withdraw 1000</code>",
+    "loan": "💳 <b>Кредит</b>\nНапиши: <code>/loan 5000000</code>\nЕсли просрочить, долг уйдет в минус баланса.",
+    "bankrupt": "🧾 <b>Банкротство</b>\nНапиши: <code>/bankrupt</code>\nДоступно при долге или минусовом балансе.",
+    "donate": "🎁 <b>Донат в казну</b>\nНапиши: <code>/donate 1000</code>",
+    "paytax": "✅ <b>Оплата налога</b>\nНапиши: <code>/paytax</code> или <code>/paytax 2000</code>",
+    "dice": "🎲 <b>Кубик</b>\nНапиши: <code>/dice 100</code>\nВыигрыш, если выпадет 5 или 6.",
+    "number": "🔢 <b>Угадай число</b>\nНапиши: <code>/number 100 7</code>\nЧисло от 1 до 10.",
+    "blackjack": "🃏 <b>21 очко</b>\nНапиши: <code>/blackjack 100</code>",
+}
 
 
 def now_utc() -> datetime:
@@ -333,15 +408,49 @@ def admin_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Статистика", callback_data="admin:stats"),
-                InlineKeyboardButton(text="Топ", callback_data="admin:top"),
+                InlineKeyboardButton(text="📊 Статистика", callback_data="admin:stats"),
+                InlineKeyboardButton(text="🏆 Топ", callback_data="admin:top"),
             ],
             [
-                InlineKeyboardButton(text="Казна", callback_data="admin:treasury"),
-                InlineKeyboardButton(text="Команды", callback_data="admin:help"),
+                InlineKeyboardButton(text="🏛 Казна", callback_data="admin:treasury"),
+                InlineKeyboardButton(text="🛠 Команды", callback_data="admin:help"),
             ],
         ]
     )
+
+
+def quick_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="💰 Баланс"), KeyboardButton(text="📜 История")],
+            [KeyboardButton(text="🏦 Меню"), KeyboardButton(text="🧾 Банкротство")],
+            [KeyboardButton(text="🎰 Казино"), KeyboardButton(text="🏛 Казна")],
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Выбери действие Z-Банка",
+    )
+
+
+def menu_keyboard(page: int) -> InlineKeyboardMarkup:
+    page = max(0, min(page, len(MENU_PAGES) - 1))
+    page_data = MENU_PAGES[page]
+    rows = []
+    buttons = page_data["buttons"]
+    for index in range(0, len(buttons), 2):
+        rows.append([InlineKeyboardButton(text=text, callback_data=data) for text, data in buttons[index:index + 2]])
+    rows.append(
+        [
+            InlineKeyboardButton(text="⬅️", callback_data=f"menu:page:{(page - 1) % len(MENU_PAGES)}"),
+            InlineKeyboardButton(text=f"{page + 1}/{len(MENU_PAGES)}", callback_data="menu:noop:0"),
+            InlineKeyboardButton(text="➡️", callback_data=f"menu:page:{(page + 1) % len(MENU_PAGES)}"),
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def menu_text(page: int) -> str:
+    page = max(0, min(page, len(MENU_PAGES) - 1))
+    return MENU_PAGES[page]["text"]
 
 
 def account_status(user: sqlite3.Row) -> str:
@@ -392,11 +501,11 @@ async def send_900(bot: Bot, to_user_id: int, amount: int, sender: sqlite3.Row, 
     try:
         await bot.send_message(
             to_user_id,
-            "Новое уведомление!\n"
-            "900:\n"
-            f"Вы получили зачисление от {source_label}\n"
-            f"Сумма: {money(amount)} {unit}\n"
-            f"Ваш баланс: {money(new_balance)} {unit}",
+            "🔔 Новое уведомление!\n"
+            "🏦 900:\n"
+            f"✅ Вы получили зачисление от {source_label}\n"
+            f"💰 Сумма: {money(amount)} {unit}\n"
+            f"💳 Ваш баланс: {money(new_balance)} {unit}",
         )
     except Exception as exc:
         logging.info("Cannot deliver 900 notification to %s: %s", to_user_id, exc)
@@ -455,13 +564,13 @@ def run_alt_guard(db: sqlite3.Connection, receiver_id: int) -> Optional[str]:
 async def transfer_money(message: Message, target: sqlite3.Row, amount: int, source: str, comment: str) -> None:
     sender = remember_user(message)
     if sender["is_blocked"]:
-        await message.answer(f"Счет заморожен: {sender['block_reason'] or 'операции запрещены'}.")
+        await message.answer(f"🧊 Счет заморожен: {sender['block_reason'] or 'операции запрещены'}.")
         return
     if target["user_id"] == sender["user_id"]:
-        await message.answer("Самому себе переводить нельзя.")
+        await message.answer("⚠️ Самому себе переводить нельзя.")
         return
     if target["is_blocked"]:
-        await message.answer("Счет получателя заморожен.")
+        await message.answer("🧊 Счет получателя заморожен.")
         return
 
     tax = amount * settings.transfer_tax_percent // 100
@@ -471,14 +580,14 @@ async def transfer_money(message: Message, target: sqlite3.Row, amount: int, sou
         fresh_target = db.execute("SELECT * FROM users WHERE user_id = ?", (target["user_id"],)).fetchone()
         if source == "crypto":
             if fresh_sender["crypto_balance"] < amount:
-                await message.answer("Недостаточно средств на криптокошельке.")
+                await message.answer("⚠️ Недостаточно средств на криптокошельке.")
                 return
             db.execute("UPDATE users SET crypto_balance = crypto_balance - ? WHERE user_id = ?", (amount, sender["user_id"]))
             db.execute("UPDATE users SET crypto_balance = crypto_balance + ? WHERE user_id = ?", (amount, target["user_id"]))
             new_balance = fresh_target["crypto_balance"] + amount
         else:
             if fresh_sender["balance"] < total:
-                await message.answer(f"Недостаточно средств. Нужно {money(total)} {settings.currency}.")
+                await message.answer(f"⚠️ Недостаточно средств. Нужно {money(total)} {settings.currency}.")
                 return
             db.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (total, sender["user_id"]))
             db.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, target["user_id"]))
@@ -490,7 +599,7 @@ async def transfer_money(message: Message, target: sqlite3.Row, amount: int, sou
         freeze_reason = run_alt_guard(db, target["user_id"])
         db.commit()
 
-    await message.answer(f"Перевод выполнен: {money(amount)} {settings.currency}.")
+    await message.answer(f"✅ Перевод выполнен: {money(amount)} {settings.currency}.")
     await send_900(message.bot, target["user_id"], amount, sender, source, new_balance)
     if freeze_reason and settings.admin_chat_id:
         await message.bot.send_message(settings.admin_chat_id, f"Анти-альт защита заморозила счет {target['full_name']}: {freeze_reason}.")
@@ -502,28 +611,149 @@ async def start(message: Message) -> None:
     with closing(connect()) as db:
         lines = history_lines(db, account["user_id"], 5)
     await message.answer(
-        "Привет! Я Олег! Твой виртуальный помощник!\n\n"
-        f"Баланс: {money(account['balance'])} {settings.currency}\n"
-        f"Z-ID: <code>{account['z_id']}</code>\n"
-        f"Карта: ****{account['card_number'][-4:]}\n"
-        f"Криптокошелек: <code>{account['crypto_wallet']}</code>\n\n"
-        "История:\n" + "\n".join(lines) + "\n\n"
-        "Ежедневный бонус нет."
+        "👋 Привет! Я Олег! Твой виртуальный помощник!\n\n"
+        f"💰 Баланс: {money(account['balance'])} {settings.currency}\n"
+        f"🪪 Z-ID: <code>{account['z_id']}</code>\n"
+        f"💳 Карта: ****{account['card_number'][-4:]}\n"
+        f"🪙 Криптокошелек: <code>{account['crypto_wallet']}</code>\n\n"
+        "📜 История:\n" + "\n".join(lines),
+        reply_markup=quick_keyboard(),
     )
+    await message.answer(
+        menu_text(0),
+        reply_markup=menu_keyboard(0),
+    )
+
+
+@router.message(Command("menu"))
+async def menu(message: Message) -> None:
+    remember_user(message)
+    await message.answer("🏦 Открываю меню Z-Банка.", reply_markup=quick_keyboard())
+    await message.answer(menu_text(0), reply_markup=menu_keyboard(0))
+
+
+@router.callback_query(F.data.startswith("menu:"))
+async def menu_callbacks(callback: CallbackQuery) -> None:
+    account = get_user(callback.from_user.id)
+    if account is None:
+        await callback.answer("Сначала напиши /start", show_alert=True)
+        return
+
+    _, action, value = callback.data.split(":", 2)
+    if action == "noop":
+        await callback.answer()
+        return
+    if action == "page":
+        page = int(value)
+        await callback.message.edit_text(menu_text(page), reply_markup=menu_keyboard(page))
+        await callback.answer()
+        return
+    if action == "help":
+        await callback.message.edit_text(MENU_HELP[value], reply_markup=menu_keyboard(1))
+        await callback.answer()
+        return
+
+    text = "🏦 Команда выполнена."
+    if value == "balance":
+        text = (
+            f"💰 <b>{settings.bank_name}</b>\n"
+            f"👤 Клиент: {account['full_name']}\n"
+            f"🛡 Статус: {account_status(account)}\n"
+            f"💳 Баланс карты ****{account['card_number'][-4:]}: <b>{money(account['balance'])} {settings.currency}</b>\n"
+            f"📥 Вклад: <b>{money(account['savings'])} {settings.currency}</b>\n"
+            f"🪙 Криптокошелек {account['crypto_wallet'][:8]}: <b>{money(account['crypto_balance'])} LWC</b>\n"
+            f"💳 Кредит: <b>{money(account['loan'])} {settings.currency}</b>\n"
+            f"🪪 Z-ID: <code>{account['z_id']}</code>"
+        )
+    elif value == "history":
+        with closing(connect()) as db:
+            text = "📜 <b>История операций</b>\n" + "\n".join(history_lines(db, account["user_id"], 10))
+    elif value == "top":
+        with closing(connect()) as db:
+            rows = db.execute("SELECT full_name, balance FROM users WHERE is_blocked = 0 ORDER BY balance DESC LIMIT 10").fetchall()
+        text = "🏆 <b>Топ клиентов Z-Банка</b>\n" + "\n".join(
+            f"{index}. {row['full_name']} - {money(row['balance'])} {settings.currency}"
+            for index, row in enumerate(rows, start=1)
+        )
+    elif value == "details":
+        text = (
+            "🪪 <b>Мои реквизиты</b>\n"
+            f"💳 Карта: <code>{account['card_number']}</code>\n"
+            f"🕶 Z-ID: <code>{account['z_id']}</code>\n"
+            f"🪙 Криптокошелек: <code>{account['crypto_wallet']}</code>"
+        )
+    elif value == "crypto":
+        text = (
+            f"🪙 <b>Криптокошелек</b>\n"
+            f"Адрес: <code>{account['crypto_wallet']}</code>\n"
+            f"Баланс: <b>{money(account['crypto_balance'])} LWC</b>\n"
+            f"Курс: 1 LWC = {money(settings.crypto_rate)} {settings.currency}"
+        )
+    elif value == "treasury":
+        with closing(connect()) as db:
+            row = db.execute("SELECT * FROM treasury WHERE id = 1").fetchone()
+            mayor = db.execute("SELECT full_name FROM users WHERE is_mayor = 1 LIMIT 1").fetchone()
+        text = (
+            "🏛 <b>Казна LimeWorld</b>\n"
+            f"Баланс: {money(row['balance'])} {settings.currency}\n"
+            f"Налог: {money(row['tax_amount'])} {settings.currency}\n"
+            f"Мэр: {mayor['full_name'] if mayor else 'не назначен'}"
+        )
+    elif value == "tax":
+        text = (
+            "🧾 <b>Налоги</b>\n"
+            f"К оплате: {money(account['tax_due_amount'])} {settings.currency}\n"
+            "Оплатить: <code>/paytax</code>"
+        )
+    elif value == "casino":
+        text = "🎰 <b>Казино</b>\n🎲 /dice 100\n🔢 /number 100 7\n🃏 /blackjack 100"
+
+    await callback.message.edit_text(text, reply_markup=menu_keyboard(0))
+    await callback.answer()
+
+
+@router.message(F.text == "💰 Баланс")
+async def quick_balance(message: Message) -> None:
+    await balance(message)
+
+
+@router.message(F.text == "📜 История")
+async def quick_history(message: Message) -> None:
+    await history(message)
+
+
+@router.message(F.text == "🏦 Меню")
+async def quick_menu(message: Message) -> None:
+    await menu(message)
+
+
+@router.message(F.text == "🧾 Банкротство")
+async def quick_bankrupt(message: Message) -> None:
+    await bankrupt(message)
+
+
+@router.message(F.text == "🎰 Казино")
+async def quick_casino(message: Message) -> None:
+    await casino(message)
+
+
+@router.message(F.text == "🏛 Казна")
+async def quick_treasury(message: Message) -> None:
+    await treasury(message)
 
 
 @router.message(Command("balance"))
 async def balance(message: Message) -> None:
     account = remember_user(message)
     await message.answer(
-        f"<b>{settings.bank_name}</b>\n"
-        f"Клиент: {account['full_name']}\n"
-        f"Статус: {account_status(account)}\n"
-        f"Баланс карты ****{account['card_number'][-4:]}: <b>{money(account['balance'])} {settings.currency}</b>\n"
-        f"Вклад: <b>{money(account['savings'])} {settings.currency}</b>\n"
-        f"Криптокошелек {account['crypto_wallet'][:8]}: <b>{money(account['crypto_balance'])} LWC</b>\n"
-        f"Кредит: <b>{money(account['loan'])} {settings.currency}</b>\n"
-        f"Z-ID: <code>{account['z_id']}</code>"
+        f"🏦 <b>{settings.bank_name}</b>\n"
+        f"👤 Клиент: {account['full_name']}\n"
+        f"🛡 Статус: {account_status(account)}\n"
+        f"💳 Баланс карты ****{account['card_number'][-4:]}: <b>{money(account['balance'])} {settings.currency}</b>\n"
+        f"📥 Вклад: <b>{money(account['savings'])} {settings.currency}</b>\n"
+        f"🪙 Криптокошелек {account['crypto_wallet'][:8]}: <b>{money(account['crypto_balance'])} LWC</b>\n"
+        f"💳 Кредит: <b>{money(account['loan'])} {settings.currency}</b>\n"
+        f"🪪 Z-ID: <code>{account['z_id']}</code>"
     )
 
 
@@ -531,11 +761,11 @@ async def balance(message: Message) -> None:
 async def pay(message: Message, command: CommandObject) -> None:
     target, args = resolve_target(message, command)
     if target is None or not args:
-        await message.answer("Формат: /pay @user 100, /pay Z123 100 или ответом на сообщение /pay 100.")
+        await message.answer("💳 Формат: /pay @user 100, /pay Z123 100 или ответом на сообщение /pay 100.")
         return
     amount = parse_amount(args[0])
     if amount is None:
-        await message.answer("Сумма должна быть положительным числом.")
+        await message.answer("⚠️ Сумма должна быть положительным числом.")
         return
     await transfer_money(message, target, amount, "card", "Перевод")
 
@@ -544,12 +774,12 @@ async def pay(message: Message, command: CommandObject) -> None:
 async def zpay(message: Message, command: CommandObject) -> None:
     args = (command.args or "").split()
     if len(args) < 2:
-        await message.answer("Формат: /zpay Z1234567890 100.")
+        await message.answer("🕶 Формат: /zpay Z1234567890 100.")
         return
     target = find_user(args[0])
     amount = parse_amount(args[1])
     if target is None or amount is None:
-        await message.answer("Проверь Z-ID и сумму.")
+        await message.answer("⚠️ Проверь Z-ID и сумму.")
         return
     await transfer_money(message, target, amount, "zid", "Анонимный перевод по Z-ID")
 
@@ -558,10 +788,10 @@ async def zpay(message: Message, command: CommandObject) -> None:
 async def crypto(message: Message) -> None:
     account = remember_user(message)
     await message.answer(
-        f"Криптокошелек: <code>{account['crypto_wallet']}</code>\n"
-        f"Баланс: <b>{money(account['crypto_balance'])} LWC</b>\n"
-        f"Курс: 1 LWC = {money(settings.crypto_rate)} {settings.currency}\n"
-        "Команды: /buycrypto 10, /sellcrypto 10, /cryptopay LW... 10"
+        f"🪙 Криптокошелек: <code>{account['crypto_wallet']}</code>\n"
+        f"💰 Баланс: <b>{money(account['crypto_balance'])} LWC</b>\n"
+        f"📈 Курс: 1 LWC = {money(settings.crypto_rate)} {settings.currency}\n"
+        "⚙️ Команды: /buycrypto 10, /sellcrypto 10, /cryptopay LW... 10"
     )
 
 
@@ -570,17 +800,17 @@ async def buycrypto(message: Message, command: CommandObject) -> None:
     account = remember_user(message)
     amount = parse_amount((command.args or "").split()[0]) if command.args else None
     if amount is None:
-        await message.answer("Формат: /buycrypto 10.")
+        await message.answer("🪙 Формат: /buycrypto 10.")
         return
     cost = amount * settings.crypto_rate
     if account["balance"] < cost:
-        await message.answer("Недостаточно средств на карте.")
+        await message.answer("⚠️ Недостаточно средств на карте.")
         return
     with closing(connect()) as db:
         db.execute("UPDATE users SET balance = balance - ?, crypto_balance = crypto_balance + ? WHERE user_id = ?", (cost, amount, account["user_id"]))
         add_transaction(db, "buy_crypto", cost, from_user_id=account["user_id"], comment=f"Покупка {amount} LWC")
         db.commit()
-    await message.answer(f"Куплено {money(amount)} LWC за {money(cost)} {settings.currency}.")
+    await message.answer(f"✅ Куплено {money(amount)} LWC за {money(cost)} {settings.currency}.")
 
 
 @router.message(Command("sellcrypto"))
@@ -588,29 +818,29 @@ async def sellcrypto(message: Message, command: CommandObject) -> None:
     account = remember_user(message)
     amount = parse_amount((command.args or "").split()[0]) if command.args else None
     if amount is None:
-        await message.answer("Формат: /sellcrypto 10.")
+        await message.answer("🪙 Формат: /sellcrypto 10.")
         return
     if account["crypto_balance"] < amount:
-        await message.answer("Недостаточно LWC.")
+        await message.answer("⚠️ Недостаточно LWC.")
         return
     gain = amount * settings.crypto_rate
     with closing(connect()) as db:
         db.execute("UPDATE users SET crypto_balance = crypto_balance - ?, balance = balance + ? WHERE user_id = ?", (amount, gain, account["user_id"]))
         add_transaction(db, "sell_crypto", gain, to_user_id=account["user_id"], comment=f"Продажа {amount} LWC")
         db.commit()
-    await message.answer(f"Продано {money(amount)} LWC. Зачислено {money(gain)} {settings.currency}.")
+    await message.answer(f"✅ Продано {money(amount)} LWC. Зачислено {money(gain)} {settings.currency}.")
 
 
 @router.message(Command("cryptopay"))
 async def cryptopay(message: Message, command: CommandObject) -> None:
     args = (command.args or "").split()
     if len(args) < 2:
-        await message.answer("Формат: /cryptopay LW... 10.")
+        await message.answer("🔁 Формат: /cryptopay LW... 10.")
         return
     target = find_user(args[0])
     amount = parse_amount(args[1])
     if target is None or amount is None:
-        await message.answer("Проверь кошелек и сумму.")
+        await message.answer("⚠️ Проверь кошелек и сумму.")
         return
     await transfer_money(message, target, amount, "crypto", "Криптоперевод")
 
@@ -620,16 +850,16 @@ async def deposit(message: Message, command: CommandObject) -> None:
     account = remember_user(message)
     amount = parse_amount((command.args or "").split()[0]) if command.args else None
     if amount is None:
-        await message.answer("Формат: /deposit 1000.")
+        await message.answer("📥 Формат: /deposit 1000.")
         return
     if account["is_blocked"] or account["balance"] < amount:
-        await message.answer("Операция недоступна или недостаточно средств.")
+        await message.answer("⚠️ Операция недоступна или недостаточно средств.")
         return
     with closing(connect()) as db:
         db.execute("UPDATE users SET balance = balance - ?, savings = savings + ? WHERE user_id = ?", (amount, amount, account["user_id"]))
         add_transaction(db, "deposit", amount, from_user_id=account["user_id"], comment="Пополнение вклада")
         db.commit()
-    await message.answer(f"На вклад переведено {money(amount)} {settings.currency}.")
+    await message.answer(f"📥 На вклад переведено {money(amount)} {settings.currency}.")
 
 
 @router.message(Command("withdraw"))
@@ -637,16 +867,16 @@ async def withdraw(message: Message, command: CommandObject) -> None:
     account = remember_user(message)
     amount = parse_amount((command.args or "").split()[0]) if command.args else None
     if amount is None:
-        await message.answer("Формат: /withdraw 1000.")
+        await message.answer("📤 Формат: /withdraw 1000.")
         return
     if account["is_blocked"] or account["savings"] < amount:
-        await message.answer("Операция недоступна или недостаточно средств на вкладе.")
+        await message.answer("⚠️ Операция недоступна или недостаточно средств на вкладе.")
         return
     with closing(connect()) as db:
         db.execute("UPDATE users SET savings = savings - ?, balance = balance + ? WHERE user_id = ?", (amount, amount, account["user_id"]))
         add_transaction(db, "withdraw", amount, to_user_id=account["user_id"], comment="Снятие со вклада")
         db.commit()
-    await message.answer(f"Со вклада снято {money(amount)} {settings.currency}.")
+    await message.answer(f"📤 Со вклада снято {money(amount)} {settings.currency}.")
 
 
 @router.message(Command("loan"))
@@ -654,10 +884,10 @@ async def loan(message: Message, command: CommandObject) -> None:
     account = remember_user(message)
     amount = parse_amount((command.args or "").split()[0]) if command.args else None
     if amount is None or amount > settings.max_loan:
-        await message.answer(f"Можно взять кредит от 1 до {money(settings.max_loan)} {settings.currency}.")
+        await message.answer(f"💳 Можно взять кредит от 1 до {money(settings.max_loan)} {settings.currency}.")
         return
     if account["is_blocked"]:
-        await message.answer("Счет заморожен.")
+        await message.answer("🧊 Счет заморожен.")
         return
     debt = amount + amount * settings.loan_fee_percent // 100
     due_at = now_utc() + timedelta(days=settings.loan_days)
@@ -668,7 +898,7 @@ async def loan(message: Message, command: CommandObject) -> None:
         )
         add_transaction(db, "loan", amount, to_user_id=account["user_id"], comment=f"К возврату {money(debt)} до {due_at.date()}")
         db.commit()
-    await message.answer(f"Кредит выдан: {money(amount)}. Если не погасить до {due_at.date()}, долг уйдет в минус баланса.")
+    await message.answer(f"💳 Кредит выдан: {money(amount)}. Если не погасить до {due_at.date()}, долг уйдет в минус баланса.")
 
 
 @router.message(Command("repay"))
@@ -676,28 +906,28 @@ async def repay(message: Message, command: CommandObject) -> None:
     account = remember_user(message)
     amount = parse_amount((command.args or "").split()[0]) if command.args else None
     if amount is None:
-        await message.answer("Формат: /repay 500.")
+        await message.answer("✅ Формат: /repay 500.")
         return
     pay_amount = min(amount, account["loan"])
     if pay_amount <= 0:
-        await message.answer("Активного кредита нет.")
+        await message.answer("ℹ️ Активного кредита нет.")
         return
     if account["balance"] < pay_amount:
-        await message.answer("Недостаточно средств. Можно просить помощь у админов или использовать /bankrupt.")
+        await message.answer("⚠️ Недостаточно средств. Можно просить помощь у админов или использовать /bankrupt.")
         return
     with closing(connect()) as db:
         db.execute("UPDATE users SET balance = balance - ?, loan = loan - ? WHERE user_id = ?", (pay_amount, pay_amount, account["user_id"]))
         db.execute("UPDATE users SET loan_due_at = NULL WHERE user_id = ? AND loan <= 0", (account["user_id"],))
         add_transaction(db, "repay", pay_amount, from_user_id=account["user_id"], comment="Погашение кредита")
         db.commit()
-    await message.answer(f"Погашено {money(pay_amount)} {settings.currency}.")
+    await message.answer(f"✅ Погашено {money(pay_amount)} {settings.currency}.")
 
 
 @router.message(Command("bankrupt"))
 async def bankrupt(message: Message) -> None:
     account = remember_user(message)
     if account["balance"] >= 0 and account["loan"] <= 0:
-        await message.answer("Банкротство доступно только при долге или минусовом балансе.")
+        await message.answer("🧾 Банкротство доступно только при долге или минусовом балансе.")
         return
     until = now_utc() + timedelta(days=settings.bankruptcy_freeze_days)
     with closing(connect()) as db:
@@ -712,7 +942,7 @@ async def bankrupt(message: Message) -> None:
         )
         add_transaction(db, "bankruptcy", 0, from_user_id=account["user_id"], comment="Самобанкротство")
         db.commit()
-    await message.answer(f"Банкротство оформлено. Долги списаны, счет заморожен на {settings.bankruptcy_freeze_days} дня.")
+    await message.answer(f"🧾 Банкротство оформлено. Долги списаны, счет заморожен на {settings.bankruptcy_freeze_days} дня.")
 
 
 @router.message(Command("history"))
@@ -720,7 +950,7 @@ async def history(message: Message) -> None:
     account = remember_user(message)
     with closing(connect()) as db:
         lines = history_lines(db, account["user_id"], 10)
-    await message.answer("<b>История операций</b>\n" + "\n".join(lines))
+    await message.answer("📜 <b>История операций</b>\n" + "\n".join(lines))
 
 
 @router.message(Command("top"))
@@ -728,7 +958,7 @@ async def top(message: Message) -> None:
     remember_user(message)
     with closing(connect()) as db:
         rows = db.execute("SELECT full_name, balance FROM users WHERE is_blocked = 0 ORDER BY balance DESC LIMIT 10").fetchall()
-    text = "<b>Топ клиентов Z-Банка</b>\n" + "\n".join(
+    text = "🏆 <b>Топ клиентов Z-Банка</b>\n" + "\n".join(
         f"{index}. {row['full_name']} - {money(row['balance'])} {settings.currency}"
         for index, row in enumerate(rows, start=1)
     )
@@ -742,11 +972,11 @@ async def treasury(message: Message) -> None:
         row = db.execute("SELECT * FROM treasury WHERE id = 1").fetchone()
         mayor = db.execute("SELECT full_name FROM users WHERE is_mayor = 1 LIMIT 1").fetchone()
     await message.answer(
-        f"<b>Казна LimeWorld</b>\n"
-        f"Баланс: {money(row['balance'])} {settings.currency}\n"
-        f"Налог: {money(row['tax_amount'])} {settings.currency} в неделю\n"
-        f"Мэр: {mayor['full_name'] if mayor else 'не назначен'}\n"
-        "Пополнить казну: /donate 1000"
+        f"🏛 <b>Казна LimeWorld</b>\n"
+        f"💰 Баланс: {money(row['balance'])} {settings.currency}\n"
+        f"🧾 Налог: {money(row['tax_amount'])} {settings.currency} в неделю\n"
+        f"👑 Мэр: {mayor['full_name'] if mayor else 'не назначен'}\n"
+        "🎁 Пополнить казну: /donate 1000"
     )
 
 
