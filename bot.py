@@ -121,7 +121,7 @@ MENU_PAGES = [
     },
     {
         "title": "🏛 Город",
-        "text": "🏛 <b>Город и казна</b>\nНалоги, казна и помощь LimeWorld:",
+        "text": "🏛 <b>Город Астроном</b>\nНалоги, казна и городские счета:",
         "buttons": [
             ("🏛 Казна", "menu:cmd:treasury"),
             ("🎁 Донат в казну", "menu:help:donate"),
@@ -637,6 +637,39 @@ async def send_900(bot: Bot, to_user_id: int, amount: int, sender: sqlite3.Row, 
         logging.info("Cannot deliver 900 notification to %s: %s", to_user_id, exc)
 
 
+async def send_bank_notice(bot: Bot, user_id: int, title: str, body: str) -> bool:
+    try:
+        await bot.send_message(user_id, f"🔔 <b>Уведомление Z-Банка</b>\n{title}\n\n{body}")
+        return True
+    except Exception as exc:
+        logging.info("Cannot deliver bank notice to %s: %s", user_id, exc)
+        return False
+
+
+async def send_balance_notice(bot: Bot, user_id: int, title: str, amount: int, new_balance: int, comment: str = "") -> bool:
+    amount_line = f"💰 Сумма: {money(amount)} {settings.currency}\n" if amount else ""
+    comment_line = f"\n📝 {comment}" if comment else ""
+    return await send_bank_notice(
+        bot,
+        user_id,
+        title,
+        f"{amount_line}💳 Баланс: {money(new_balance)} {settings.currency}{comment_line}",
+    )
+
+
+async def send_tax_notice(bot: Bot, user_id: int, amount: int, due_at: datetime) -> bool:
+    return await send_bank_notice(
+        bot,
+        user_id,
+        "🧾 <b>Выставлен налоговый счет</b>",
+        "🏛 Администрация города Астроном выставила счет за коммунальные услуги и городской налог.\n"
+        f"💰 К оплате: <b>{money(amount)} {settings.currency}</b>\n"
+        f"⏳ Оплатить до: <b>{due_at.date()}</b>\n\n"
+        f"✅ Оплата: <code>/paytax {amount}</code>\n"
+        "⚠️ Если долго не оплатить, счет будет заморожен.",
+    )
+
+
 def apply_overdue_loans(db: sqlite3.Connection, user_id: int) -> None:
     user = db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
     due_at = parse_dt(user["loan_due_at"]) if user and user["loan_due_at"] else None
@@ -898,6 +931,26 @@ async def transfer_money(message: Message, target: sqlite3.Row, amount: int, sou
         db.commit()
 
     await message.answer(f"✅ Перевод выполнен: {money(amount)} {settings.currency}.")
+    sender_after = get_user(sender["user_id"])
+    if sender_after:
+        if source == "crypto":
+            await send_bank_notice(
+                message.bot,
+                sender["user_id"],
+                "🔁 <b>Криптоперевод отправлен</b>",
+                f"💰 Сумма: {money(amount)} LWC\n"
+                f"🪙 Баланс кошелька: {money(sender_after['crypto_balance'])} LWC\n"
+                f"👤 Получатель: {target['full_name']}",
+            )
+        else:
+            await send_balance_notice(
+                message.bot,
+                sender["user_id"],
+                "💸 <b>Перевод отправлен</b>",
+                amount,
+                sender_after["balance"],
+                f"Получатель: {target['full_name']}",
+            )
     await send_900(message.bot, target["user_id"], amount, sender, source, new_balance)
     if freeze_reason and settings.admin_chat_id:
         await message.bot.send_message(settings.admin_chat_id, f"Анти-альт защита заморозила счет {target['full_name']}: {freeze_reason}.")
@@ -992,7 +1045,7 @@ async def menu_callbacks(callback: CallbackQuery) -> None:
             row = db.execute("SELECT * FROM treasury WHERE id = 1").fetchone()
             mayor = db.execute("SELECT full_name FROM users WHERE is_mayor = 1 LIMIT 1").fetchone()
         text = (
-            "🏛 <b>Казна LimeWorld</b>\n"
+            "🏛 <b>Казна города Астроном</b>\n"
             f"Баланс: {money(row['balance'])} {settings.currency}\n"
             f"Налог: {money(row['tax_amount'])} {settings.currency}\n"
             f"Мэр: {mayor['full_name'] if mayor else 'не назначен'}"
@@ -1196,7 +1249,16 @@ async def loan(message: Message, command: CommandObject) -> None:
         )
         add_transaction(db, "loan", amount, to_user_id=account["user_id"], comment=f"К возврату {money(debt)} до {due_at.date()}")
         db.commit()
+    fresh = get_user(account["user_id"])
     await message.answer(f"💳 Кредит выдан: {money(amount)}. Если не погасить до {due_at.date()}, долг уйдет в минус баланса.")
+    await send_balance_notice(
+        message.bot,
+        account["user_id"],
+        "💳 <b>Кредит выдан</b>",
+        amount,
+        fresh["balance"],
+        f"К возврату: {money(debt)} до {due_at.date()}",
+    )
 
 
 @router.message(Command("repay"))
@@ -1218,7 +1280,9 @@ async def repay(message: Message, command: CommandObject) -> None:
         db.execute("UPDATE users SET loan_due_at = NULL WHERE user_id = ? AND loan <= 0", (account["user_id"],))
         add_transaction(db, "repay", pay_amount, from_user_id=account["user_id"], comment="Погашение кредита")
         db.commit()
+    fresh = get_user(account["user_id"])
     await message.answer(f"✅ Погашено {money(pay_amount)} {settings.currency}.")
+    await send_balance_notice(message.bot, account["user_id"], "✅ <b>Кредит погашен</b>", pay_amount, fresh["balance"])
 
 
 @router.message(Command("bankrupt"))
@@ -1270,7 +1334,7 @@ async def treasury(message: Message) -> None:
         row = db.execute("SELECT * FROM treasury WHERE id = 1").fetchone()
         mayor = db.execute("SELECT full_name FROM users WHERE is_mayor = 1 LIMIT 1").fetchone()
     await message.answer(
-        f"🏛 <b>Казна LimeWorld</b>\n"
+        f"🏛 <b>Казна города Астроном</b>\n"
         f"💰 Баланс: {money(row['balance'])} {settings.currency}\n"
         f"🧾 Налог: {money(row['tax_amount'])} {settings.currency} в неделю\n"
         f"👑 Мэр: {mayor['full_name'] if mayor else 'не назначен'}\n"
@@ -1293,7 +1357,9 @@ async def donate(message: Message, command: CommandObject) -> None:
         db.execute("UPDATE treasury SET balance = balance + ?, updated_at = ? WHERE id = 1", (amount, now_iso()))
         add_transaction(db, "treasury_donate", amount, from_user_id=account["user_id"], comment="Донат в казну")
         db.commit()
+    fresh = get_user(account["user_id"])
     await message.answer(f"В казну отправлено {money(amount)} {settings.currency}.")
+    await send_balance_notice(message.bot, account["user_id"], "🏛 <b>Донат в казну</b>", amount, fresh["balance"])
 
 
 @router.message(Command("tax"))
@@ -1303,7 +1369,7 @@ async def tax(message: Message) -> None:
         await message.answer("Активных налоговых счетов нет.")
         return
     await message.answer(
-        f"Вот счет за коммуналку и налоги: {money(account['tax_due_amount'])} {settings.currency}.\n"
+        f"🏛 Счет города Астроном: коммунальные услуги и городской налог - {money(account['tax_due_amount'])} {settings.currency}.\n"
         f"Оплатить: /paytax {account['tax_due_amount']}"
     )
 
@@ -1327,7 +1393,9 @@ async def paytax(message: Message, command: CommandObject) -> None:
         db.execute("UPDATE treasury SET balance = balance + ?, updated_at = ? WHERE id = 1", (pay_amount, now_iso()))
         add_transaction(db, "tax_pay", pay_amount, from_user_id=account["user_id"], comment="Оплата налога")
         db.commit()
-    await message.answer(f"Налог оплачен: {money(pay_amount)} {settings.currency}.")
+    fresh = get_user(account["user_id"])
+    await message.answer(f"✅ Налог оплачен: {money(pay_amount)} {settings.currency}.")
+    await send_balance_notice(message.bot, account["user_id"], "✅ <b>Налог оплачен</b>", pay_amount, fresh["balance"])
 
 
 def is_mayor(user_id: int) -> bool:
@@ -1339,7 +1407,7 @@ def is_mayor(user_id: int) -> bool:
 async def mayorwithdraw(message: Message, command: CommandObject) -> None:
     account = remember_user(message)
     if not is_mayor(account["user_id"]):
-        await message.answer("Эта команда доступна только мэру.")
+        await message.answer("Эта команда доступна только мэру города Астроном.")
         return
     amount = parse_amount((command.args or "").split()[0]) if command.args else None
     if amount is None:
@@ -1354,14 +1422,14 @@ async def mayorwithdraw(message: Message, command: CommandObject) -> None:
         db.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, account["user_id"]))
         add_transaction(db, "mayor_withdraw", amount, to_user_id=account["user_id"], comment="Снятие из казны мэром")
         db.commit()
-    await message.answer(f"Мэр снял из казны {money(amount)} {settings.currency}.")
+    await message.answer(f"👑 Мэр Астронома снял из казны {money(amount)} {settings.currency}.")
 
 
 @router.message(Command("settax"))
 async def settax(message: Message, command: CommandObject) -> None:
     account = remember_user(message)
     if not is_mayor(account["user_id"]) and not is_admin_context(message):
-        await message.answer("Налог может менять мэр или админ в спец-чате.")
+        await message.answer("Налог может менять мэр Астронома или админ в спец-чате.")
         return
     amount = parse_amount((command.args or "").split()[0]) if command.args else None
     if amount is None:
@@ -1370,7 +1438,7 @@ async def settax(message: Message, command: CommandObject) -> None:
     with closing(connect()) as db:
         db.execute("UPDATE treasury SET tax_amount = ?, tax_enabled = 1, updated_at = ? WHERE id = 1", (amount, now_iso()))
         db.commit()
-    await message.answer(f"Недельный налог установлен: {money(amount)} {settings.currency}.")
+    await message.answer(f"🏛 Недельный налог города Астроном установлен: {money(amount)} {settings.currency}.")
 
 
 @router.message(Command("billtax"))
@@ -1382,6 +1450,7 @@ async def billtax(message: Message) -> None:
     with closing(connect()) as db:
         treasury_row = db.execute("SELECT * FROM treasury WHERE id = 1").fetchone()
         amount = treasury_row["tax_amount"]
+        users = db.execute("SELECT user_id FROM users WHERE is_blocked = 0").fetchall()
         db.execute(
             """
             UPDATE users
@@ -1391,7 +1460,22 @@ async def billtax(message: Message) -> None:
             (amount, due_at.isoformat(timespec="seconds")),
         )
         db.commit()
-    await message.answer(f"Налоговый счет выставлен всем активным клиентам: {money(amount)} до {due_at.date()}.")
+
+    delivered = 0
+    failed = 0
+    for user in users:
+        ok = await send_tax_notice(message.bot, user["user_id"], amount, due_at)
+        if ok:
+            delivered += 1
+        else:
+            failed += 1
+        await asyncio.sleep(0.05)
+
+    await message.answer(
+        f"🧾 Счет города Астроном выставлен всем активным клиентам: {money(amount)} до {due_at.date()}.\n"
+        f"🔔 Уведомления доставлены: {delivered}\n"
+        f"⚠️ Не доставлены: {failed}"
+    )
 
 
 @router.message(Command("casino"))
@@ -1579,7 +1663,7 @@ async def admin_callbacks(callback: CallbackQuery) -> None:
             text = "<b>Топ игроков</b>\n" + "\n".join(f"{i}. {r['full_name']} - {money(r['balance'])}" for i, r in enumerate(rows, 1))
         elif action == "treasury":
             row = db.execute("SELECT * FROM treasury WHERE id = 1").fetchone()
-            text = f"<b>Казна</b>\nБаланс: {money(row['balance'])}\nНалог: {money(row['tax_amount'])}"
+            text = f"🏛 <b>Казна города Астроном</b>\nБаланс: {money(row['balance'])}\nНалог: {money(row['tax_amount'])}"
         else:
             text = (
                 "<b>Админ-команды</b>\n"
@@ -1671,6 +1755,18 @@ async def client_callbacks(callback: CallbackQuery) -> None:
         db.commit()
 
     fresh = get_user(user_id)
+    if action == "freeze":
+        await send_bank_notice(callback.bot, user_id, "🧊 <b>Счет заморожен</b>", "Причина: заморозка через панель.")
+    elif action == "unfreeze":
+        await send_bank_notice(callback.bot, user_id, "🔥 <b>Счет разморожен</b>", "Операции по счету снова доступны.")
+    elif action == "review":
+        await send_bank_notice(callback.bot, user_id, "🔎 <b>Требуется проверка</b>", "Ваш счет временно заморожен до проверки администрацией.")
+    elif action == "verify":
+        await send_bank_notice(callback.bot, user_id, "✅ <b>Аккаунт проверен</b>", "Статус клиента обновлен, счет активен.")
+    elif action == "mayor":
+        await send_bank_notice(callback.bot, user_id, "👑 <b>Вы назначены мэром Астронома</b>", "Теперь вам доступны команды мэра и управление городской казной.")
+    elif action == "clearloan":
+        await send_bank_notice(callback.bot, user_id, "🧾 <b>Долг списан</b>", "Администрация списала кредитную задолженность.")
     await callback.message.edit_text(user_card_text(fresh), reply_markup=admin_client_keyboard(user_id))
     await callback.answer("Готово.")
 
@@ -1750,6 +1846,24 @@ async def handle_pending_admin_input(message: Message) -> bool:
 
     fresh = get_user(user_id)
     await message.answer(result)
+    if action == "give":
+        await send_balance_notice(message.bot, user_id, "💰 <b>Админское начисление</b>", amount, fresh["balance"])
+    elif action == "take":
+        await send_balance_notice(message.bot, user_id, "💸 <b>Админское списание</b>", amount, fresh["balance"])
+    elif action == "setbalance":
+        await send_bank_notice(
+            message.bot,
+            user_id,
+            "🧮 <b>Баланс изменен администрацией</b>",
+            f"💳 Новый баланс: {money(fresh['balance'])} {settings.currency}",
+        )
+    elif action == "setcrypto":
+        await send_bank_notice(
+            message.bot,
+            user_id,
+            "🪙 <b>Криптобаланс изменен администрацией</b>",
+            f"🪙 Новый баланс: {money(fresh['crypto_balance'])} LWC",
+        )
     await message.answer(user_card_text(fresh), reply_markup=admin_client_keyboard(user_id))
     return True
 
@@ -1781,6 +1895,18 @@ async def admin_money_command(message: Message, command: CommandObject, mode: st
             add_transaction(db, "admin_setbalance", amount, to_user_id=target["user_id"], comment=reason)
             text = f"Баланс игрока {target['full_name']} установлен: {money(amount)}."
         db.commit()
+    fresh = get_user(target["user_id"])
+    if mode == "give":
+        await send_balance_notice(message.bot, target["user_id"], "💰 <b>Админское начисление</b>", amount, fresh["balance"], reason)
+    elif mode == "take":
+        await send_balance_notice(message.bot, target["user_id"], "💸 <b>Админское списание</b>", amount, fresh["balance"], reason)
+    else:
+        await send_bank_notice(
+            message.bot,
+            target["user_id"],
+            "🧮 <b>Баланс изменен администрацией</b>",
+            f"💳 Новый баланс: {money(fresh['balance'])} {settings.currency}\n📝 {reason}",
+        )
     await message.answer(text)
 
 
@@ -1874,7 +2000,7 @@ async def check(message: Message, command: CommandObject) -> None:
 @router.message(Command("setmayor"))
 async def setmayor(message: Message, command: CommandObject) -> None:
     if not is_admin_context(message):
-        await message.answer("Мэра назначают только админы в спец-чате.")
+        await message.answer("Мэра Астронома назначают только админы в спец-чате.")
         return
     target, _ = resolve_target(message, command)
     if target is None:
@@ -1884,7 +2010,7 @@ async def setmayor(message: Message, command: CommandObject) -> None:
         db.execute("UPDATE users SET is_mayor = 0")
         db.execute("UPDATE users SET is_mayor = 1 WHERE user_id = ?", (target["user_id"],))
         db.commit()
-    await message.answer(f"{target['full_name']} теперь мэр.")
+    await message.answer(f"👑 {target['full_name']} теперь мэр города Астроном.")
 
 
 @router.message()
